@@ -27,4 +27,23 @@ d = run(False, [1, 0, 1, 1]); assert d.calls == [True]
 d = run(True, [1, 1, 0, 0, 0]); assert d.calls == [] and d.m
 # user unmutes mid-dictation: helper does not re-touch
 d = run(False, [1, 1, 0, 0], user={1: False}); assert d.calls == [True]
+
+# version compare
+assert hush.vtuple("v1.10.0") > hush.vtuple("1.9.3") and hush.vtuple("v1.1.0") == hush.vtuple("1.1.0")
+
+# zip update: files land in the app folder, path escapes are refused
+import io, tempfile, zipfile
+from pathlib import Path
+buf = io.BytesIO()
+with zipfile.ZipFile(buf, "w") as z:
+    z.writestr("gigolajulian-hush-abc123/hush.py", "new")
+    z.writestr("gigolajulian-hush-abc123/assets/icon.svg", "svg")
+    z.writestr("gigolajulian-hush-abc123/../../evil.txt", "x")
+hush._get = lambda url, timeout=0: buf.getvalue()
+with tempfile.TemporaryDirectory() as t:
+    app = Path(t) / "a" / "app"; app.mkdir(parents=True)
+    (app / "hush.py").write_text("old")
+    hush.apply_update("v9.9.9", "zip", app_dir=app)
+    assert (app / "hush.py").read_text() == "new" and (app / "assets" / "icon.svg").exists()
+    assert not any(p.name == "evil.txt" for p in Path(t).rglob("*"))
 print("ok")

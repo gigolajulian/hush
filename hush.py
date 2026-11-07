@@ -3,7 +3,7 @@
 Signal: WASAPI capture session of claude.exe goes ACTIVE while dictating.
 Action: Discord local RPC (GET/SET_VOICE_SETTINGS), so the real mute state is read first.
 """
-import json, os, struct, threading, time, uuid, urllib.parse, urllib.request
+import io, json, os, shutil, struct, subprocess, sys, threading, time, uuid, urllib.parse, urllib.request, zipfile
 from pathlib import Path
 
 import winreg
@@ -15,12 +15,17 @@ from pycaw.api.mmdeviceapi import IMMDeviceEnumerator
 from pycaw.constants import CLSID_MMDeviceEnumerator
 from pycaw.pycaw import IAudioSessionControl2, IAudioSessionManager2
 
+VERSION = "1.1.0"
+REPO = "gigolajulian/hush"
+APP_DIR = Path(__file__).resolve().parent
+UPDATE_EVERY = 24 * 3600
 POLL = 0.25
 RELEASE_POLLS = 2  # inactive this many polls in a row before unmuting
 GUARD_PROCS = {"r5apex.exe", "r5apex_dx12.exe", "easyanticheat.exe", "easyanticheat_eos.exe"}
 STATE_DIR = Path(os.environ["LOCALAPPDATA"]) / "Hush"
 TOKEN_FILE = STATE_DIR / "token.json"
 LOG_FILE = STATE_DIR / "hush.log"
+SETTINGS_FILE = STATE_DIR / "settings.json"
 
 
 def env(name):
@@ -195,6 +200,69 @@ def guarded():
     return any((p.info["name"] or "").lower() in GUARD_PROCS for p in psutil.process_iter(["name"]))
 
 
+# ---------- updates ----------
+def load_settings():
+    try: return {"auto_update": True, **json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))}
+    except (OSError, ValueError): return {"auto_update": True}
+
+
+def save_settings(s):
+    STATE_DIR.mkdir(exist_ok=True)
+    SETTINGS_FILE.write_text(json.dumps(s), encoding="utf-8")
+
+
+def vtuple(v):
+    return tuple(int(x) for x in v.lstrip("v").split(".")[:3] if x.isdigit())
+
+
+def _get(url, timeout=20):
+    req = urllib.request.Request(url, headers={"User-Agent": f"Hush/{VERSION}", "Accept": "application/vnd.github+json"})
+    return urllib.request.urlopen(req, timeout=timeout).read()
+
+
+def latest_release():
+    """(tag, zip_url) of the newest GitHub release, or None if there is none."""
+    try:
+        r = json.loads(_get(f"https://api.github.com/repos/{REPO}/releases/latest"))
+    except urllib.error.HTTPError as e:
+        if e.code == 404: return None
+        raise
+    return r["tag_name"], r["zipball_url"]
+
+
+def newer_release():
+    rel = latest_release()
+    return rel if rel and vtuple(rel[0]) > vtuple(VERSION) else None
+
+
+def apply_update(tag, zip_url, app_dir=APP_DIR):
+    """Replace the app files with the release. Git checkouts pull instead, so a dev tree is never overwritten."""
+    if (app_dir / ".git").exists():
+        subprocess.run(["git", "-C", str(app_dir), "pull", "--ff-only", "-q"], check=True,
+                       creationflags=subprocess.CREATE_NO_WINDOW)
+    else:
+        with zipfile.ZipFile(io.BytesIO(_get(zip_url, timeout=60))) as z:
+            for info in z.infolist():
+                rel = Path(*Path(info.filename).parts[1:])  # drop the "owner-repo-sha/" root folder
+                if info.is_dir() or not rel.parts: continue
+                dest = (app_dir / rel).resolve()
+                if app_dir.resolve() not in dest.parents: continue  # refuse paths that escape the app folder
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                with z.open(info) as src, open(dest, "wb") as out: shutil.copyfileobj(src, out)
+    py = app_dir / ".venv" / "Scripts" / "python.exe"
+    if py.exists():
+        subprocess.run([str(py), "-m", "pip", "install", "-q", "--disable-pip-version-check", "-r",
+                        str(app_dir / "requirements.txt")], check=True, creationflags=subprocess.CREATE_NO_WINDOW)
+    log(f"updated to {tag}")
+
+
+def restart():
+    exe = Path(sys.executable)
+    pyw = exe.with_name("pythonw.exe") if exe.with_name("pythonw.exe").exists() else exe
+    subprocess.Popen([str(pyw), str(APP_DIR / "hush.py")], cwd=str(APP_DIR),
+                     creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP)
+
+
 # ---------- tray ----------
 def _draw_icon(on):
     """The h-dot app icon; the dot turns cyan while Hush holds a mute."""
@@ -217,13 +285,15 @@ def icon_img(on):
 
 
 def main():
-    state = {"paused": False, "status": "starting", "stop": False}
+    state = {"paused": False, "status": "starting", "stop": False, "busy": False, "update": ""}
+    settings = load_settings()
     icon = pystray.Icon("hush", icon_img(False), "Hush")
 
     def loop():
         mic, d = ClaudeMic(), Discord()
         m, last_guard, guard, retry_at = Muter(d), 0, False, 0
         while not state["stop"]:
+            state["busy"] = guard or m.talking or m.we_muted  # never restart for an update mid-dictation or in Apex
             try:
                 if time.time() - last_guard > 2:
                     last_guard, was = time.time(), guard
@@ -252,18 +322,63 @@ def main():
         try: m.release()
         except Exception: pass
 
+    loop_thread = threading.Thread(target=loop, daemon=True)
+    check_lock = threading.Lock()
+
+    def shutdown():
+        state["stop"] = True
+        loop_thread.join(timeout=3)  # let the loop give back any mute it holds
+        icon.stop()
+
+    def check(manual):
+        """Look for a newer release and install it. Waits until no dictation or Apex is in progress."""
+        if not check_lock.acquire(blocking=False): return
+        try:
+            state["update"] = "checking for updates"
+            rel = newer_release()
+            if not rel:
+                state["update"] = f"up to date ({VERSION})"
+                if manual: icon.notify(f"Hush {VERSION} is up to date.", "Hush")
+                return
+            state["update"] = f"updating to {rel[0]}"
+            while state["busy"] and not state["stop"]: time.sleep(1)
+            if state["stop"]: return
+            apply_update(*rel)
+            icon.notify(f"Updated to {rel[0]}. Restarting.", "Hush")
+            restart()
+            shutdown()
+        except Exception as e:
+            log(f"update error {e!r}")
+            state["update"] = "update check failed"
+            if manual: icon.notify("Update check failed. See the log.", "Hush")
+        finally:
+            check_lock.release()
+
+    def auto_updates():
+        time.sleep(30)  # let startup settle
+        while not state["stop"]:
+            if settings["auto_update"]: check(manual=False)
+            for _ in range(UPDATE_EVERY):
+                if state["stop"]: return
+                time.sleep(1)
+
     def toggle_pause(_, __): state["paused"] = not state["paused"]
 
-    def quit_(i, _):
-        state["stop"] = True
-        i.stop()
+    def toggle_auto(_, __):
+        settings["auto_update"] = not settings["auto_update"]
+        save_settings(settings)
 
     icon.menu = pystray.Menu(
         pystray.MenuItem(lambda _: state["status"], None, enabled=False),
+        pystray.MenuItem(lambda _: state["update"] or f"Hush {VERSION}", None, enabled=False),
+        pystray.Menu.SEPARATOR,
         pystray.MenuItem("Pause", toggle_pause, checked=lambda _: state["paused"]),
-        pystray.MenuItem("Quit", quit_),
+        pystray.MenuItem("Check for updates", lambda: threading.Thread(target=check, args=(True,), daemon=True).start()),
+        pystray.MenuItem("Auto update", toggle_auto, checked=lambda _: settings["auto_update"]),
+        pystray.MenuItem("Quit", lambda: shutdown()),
     )
-    threading.Thread(target=loop, daemon=True).start()
+    loop_thread.start()
+    threading.Thread(target=auto_updates, daemon=True).start()
     icon.run()
 
 
