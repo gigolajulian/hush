@@ -269,16 +269,14 @@ def restart():
 
 # ---------- tray ----------
 def _draw_icon(on):
-    """The h-dot app icon; the dot turns cyan while Hush holds a mute."""
-    im = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+    """Dot with a vertical line through it. Only the colors change: grey while watching, cyan while Hush holds a mute."""
+    s = 4  # draw at 4x, downsample for smooth edges
+    im = Image.new("RGBA", (64 * s, 64 * s), (0, 0, 0, 0))
     dr = ImageDraw.Draw(im)
-    try: font = ImageFont.truetype("seguisb.ttf", 72)  # Segoe UI Semibold, ships with Windows
-    except OSError: font = ImageFont.load_default()
-    x0, y0, x1, y1 = dr.textbbox((0, 0), "h", font=font)
-    dr.text((-x0 + 2, 62 - y1), "h", font=font, fill=(232, 232, 230, 255))  # h fills the height, no tile
-    w = x1 - x0
-    dr.ellipse((w + 5, 47, w + 19, 61), fill=(0, 200, 220, 255) if on else (140, 142, 146, 255))
-    return im
+    dr.ellipse((8 * s, 8 * s, 56 * s, 56 * s), fill=(0, 200, 220, 255) if on else (120, 122, 126, 255))
+    dr.rectangle((26 * s, 0, 38 * s, 64 * s), fill=(0, 0, 0, 0))  # transparent gap around the line
+    dr.rounded_rectangle((29 * s, 1 * s, 35 * s, 63 * s), radius=3 * s, fill=(255, 255, 255, 255) if on else (200, 200, 198, 255))
+    return im.resize((64, 64), Image.LANCZOS)
 
 
 ICONS = {True: _draw_icon(True), False: _draw_icon(False)}
