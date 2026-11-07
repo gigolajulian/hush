@@ -1,3 +1,5 @@
+![hush](assets/thumbnail.png)
+
 # Hush
 
 Mutes you on Discord while you dictate to the Claude desktop app. Unmutes you when you stop, but only if Hush did the muting.
