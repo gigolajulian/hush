@@ -1,0 +1,4 @@
+pycaw>=20240316
+psutil>=5.9
+pystray>=0.19
+pillow>=10
