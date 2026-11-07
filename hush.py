@@ -200,11 +200,12 @@ def _draw_icon(on):
     """The h-dot app icon; the dot turns cyan while Hush holds a mute."""
     im = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
     dr = ImageDraw.Draw(im)
-    dr.rounded_rectangle((0, 0, 63, 63), radius=14, fill=(13, 14, 16, 255))
-    try: font = ImageFont.truetype("seguisb.ttf", 46)  # Segoe UI Semibold, ships with Windows
+    try: font = ImageFont.truetype("seguisb.ttf", 72)  # Segoe UI Semibold, ships with Windows
     except OSError: font = ImageFont.load_default()
-    dr.text((29, 47), "h", font=font, fill=(232, 232, 230, 255), anchor="ms")
-    dr.ellipse((41, 39, 51, 49), fill=(0, 200, 220, 255) if on else (110, 112, 116, 255))
+    x0, y0, x1, y1 = dr.textbbox((0, 0), "h", font=font)
+    dr.text((-x0 + 2, 62 - y1), "h", font=font, fill=(232, 232, 230, 255))  # h fills the height, no tile
+    w = x1 - x0
+    dr.ellipse((w + 5, 47, w + 19, 61), fill=(0, 200, 220, 255) if on else (140, 142, 146, 255))
     return im
 
 
