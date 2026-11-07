@@ -12,7 +12,7 @@ Windows only. One tray icon. About 0.02% CPU.
 - When you stop, it unmutes you only if it muted you and you're still muted. If you muted yourself first, it leaves you alone.
 - It goes idle while Apex Legends or Easy Anti-Cheat runs.
 
-Tray dot: grey while watching, cyan while Hush holds a mute. Right-click for Pause and Quit.
+Tray icon: the h-dot logo. The dot is grey while watching, cyan while Hush holds a mute. Right-click for Pause and Quit.
 
 ## Install
 You need Python 3.10+ and the Discord desktop app.

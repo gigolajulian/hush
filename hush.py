@@ -10,7 +10,7 @@ import winreg
 
 import comtypes, psutil, pystray
 from comtypes import CLSCTX_ALL
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 from pycaw.api.mmdeviceapi import IMMDeviceEnumerator
 from pycaw.constants import CLSID_MMDeviceEnumerator
 from pycaw.pycaw import IAudioSessionControl2, IAudioSessionManager2
@@ -196,10 +196,23 @@ def guarded():
 
 
 # ---------- tray ----------
-def icon_img(on):
+def _draw_icon(on):
+    """The h-dot app icon; the dot turns cyan while Hush holds a mute."""
     im = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
-    ImageDraw.Draw(im).ellipse((14, 14, 50, 50), fill=(0, 200, 220, 255) if on else (140, 140, 140, 255))
+    dr = ImageDraw.Draw(im)
+    dr.rounded_rectangle((0, 0, 63, 63), radius=14, fill=(13, 14, 16, 255))
+    try: font = ImageFont.truetype("seguisb.ttf", 46)  # Segoe UI Semibold, ships with Windows
+    except OSError: font = ImageFont.load_default()
+    dr.text((29, 47), "h", font=font, fill=(232, 232, 230, 255), anchor="ms")
+    dr.ellipse((41, 39, 51, 49), fill=(0, 200, 220, 255) if on else (110, 112, 116, 255))
     return im
+
+
+ICONS = {True: _draw_icon(True), False: _draw_icon(False)}
+
+
+def icon_img(on):
+    return ICONS[on]
 
 
 def main():
@@ -232,8 +245,8 @@ def main():
                 state["status"] = msg
                 m.talking = m.we_muted and m.talking  # if the mute never landed, retry it on the next active poll
                 retry_at = time.time() + 5
-            icon.icon = icon_img(m.we_muted)
-            icon.title = f"Hush | {state['status']}"
+            if icon.icon is not icon_img(m.we_muted): icon.icon = icon_img(m.we_muted)  # only touch the tray on change
+            if icon.title != f"Hush | {state['status']}": icon.title = f"Hush | {state['status']}"
             time.sleep(POLL)
         try: m.release()
         except Exception: pass
