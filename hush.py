@@ -217,7 +217,11 @@ def vtuple(v):
 
 def _get(url, timeout=20):
     req = urllib.request.Request(url, headers={"User-Agent": f"Hush/{VERSION}", "Accept": "application/vnd.github+json"})
-    return urllib.request.urlopen(req, timeout=timeout).read()
+    for attempt in range(3):  # GitHub answers 5xx while it builds a fresh release zip
+        try: return urllib.request.urlopen(req, timeout=timeout).read()
+        except urllib.error.HTTPError as e:
+            if e.code < 500 or attempt == 2: raise
+            time.sleep(5)
 
 
 def latest_release():
