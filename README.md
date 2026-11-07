@@ -10,7 +10,6 @@ Windows only. One tray icon. About 0.02% CPU.
 - Every 250 ms it checks whether the Claude app is capturing your mic (Windows audio sessions).
 - When you start dictating, it asks Discord whether you're muted. If you aren't, it mutes you.
 - When you stop, it unmutes you only if it muted you and you're still muted. If you muted yourself first, it leaves you alone.
-- It goes idle while Apex Legends or Easy Anti-Cheat runs.
 
 Tray icon: a dot with a vertical line through it. Grey while watching, cyan while Hush holds a mute. Right-click for status, version, Pause, Check for updates, Auto update and Quit.
 
@@ -31,7 +30,7 @@ You need Python 3.10+ and the Discord desktop app.
 Hush starts at login from then on.
 
 ## Updates
-Hush checks GitHub for a new release at startup and once a day, and installs it when you aren't dictating. It never restarts mid-dictation or while Apex runs. Right-click the tray icon for **Check for updates**, or untick **Auto update** to turn it off. A git clone updates with `git pull`; a zip install gets its files replaced.
+Hush checks GitHub for a new release at startup and once a day, and installs it when you aren't dictating. It never restarts mid-dictation. Right-click the tray icon for **Check for updates**, or untick **Auto update** to turn it off. A git clone updates with `git pull`; a zip install gets its files replaced.
 
 ## Uninstall
 ```

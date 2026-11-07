@@ -21,7 +21,6 @@ APP_DIR = Path(__file__).resolve().parent
 UPDATE_EVERY = 24 * 3600
 POLL = 0.25
 RELEASE_POLLS = 2  # inactive this many polls in a row before unmuting
-GUARD_PROCS = {"r5apex.exe", "r5apex_dx12.exe", "easyanticheat.exe", "easyanticheat_eos.exe"}
 STATE_DIR = Path(os.environ["LOCALAPPDATA"]) / "Hush"
 TOKEN_FILE = STATE_DIR / "token.json"
 LOG_FILE = STATE_DIR / "hush.log"
@@ -196,10 +195,6 @@ class Muter:
                 log("unmuted discord")
 
 
-def guarded():
-    return any((p.info["name"] or "").lower() in GUARD_PROCS for p in psutil.process_iter(["name"]))
-
-
 # ---------- updates ----------
 def load_settings():
     try: return {"auto_update": True, **json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))}
@@ -293,21 +288,12 @@ def main():
 
     def loop():
         mic, d = ClaudeMic(), Discord()
-        m, last_guard, guard, retry_at = Muter(d), 0, False, 0
+        m, retry_at = Muter(d), 0
         while not state["stop"]:
-            state["busy"] = guard or m.talking or m.we_muted  # never restart for an update mid-dictation or in Apex
+            state["busy"] = m.talking or m.we_muted  # never restart for an update mid-dictation
             try:
-                if time.time() - last_guard > 2:
-                    last_guard, was = time.time(), guard
-                    guard = guarded()
-                    if guard and not was:
-                        log("apex running: idle")
-                        try: m.release()
-                        except Exception: pass
-                        m.talking = False
-                        d.close()
-                if guard or state["paused"]:
-                    state["status"] = "idle: Apex running" if guard else "paused"
+                if state["paused"]:
+                    state["status"] = "paused"
                 elif time.time() >= retry_at:
                     if not d.pipe: d.connect()  # connect up front so the tray shows the real Discord state
                     m.tick(mic.active())
@@ -333,7 +319,7 @@ def main():
         icon.stop()
 
     def check(manual):
-        """Look for a newer release and install it. Waits until no dictation or Apex is in progress."""
+        """Look for a newer release and install it. Waits until no dictation is in progress."""
         if not check_lock.acquire(blocking=False): return
         try:
             state["update"] = "checking for updates"
