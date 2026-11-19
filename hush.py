@@ -20,7 +20,7 @@ if WIN:
     from pycaw.constants import CLSID_MMDeviceEnumerator
     from pycaw.pycaw import IAudioSessionControl2, IAudioSessionManager2
 
-VERSION = "1.1.2"
+VERSION = "1.2.0"
 REPO = "gigolajulian/hush"
 APP_DIR = Path(__file__).resolve().parent
 UPDATE_EVERY = 24 * 3600
