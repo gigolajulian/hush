@@ -4,27 +4,31 @@
 
 Mutes you on Discord while you dictate to the Claude desktop app. Unmutes you when you stop, but only if Hush did the muting.
 
-Windows only. One tray icon. About 0.02% CPU.
+Windows and macOS (14 or later). One tray or menu bar icon. About 0.02% CPU.
 
 ## How it works
-- Every 250 ms it checks whether the Claude app is capturing your mic (Windows audio sessions).
+- Every 250 ms it checks whether the Claude app is capturing your mic: Windows audio sessions, or CoreAudio on macOS (no mic permission needed).
 - When you start dictating, it asks Discord whether you're muted. If you aren't, it mutes you.
 - When you stop, it unmutes you only if it muted you and you're still muted. If you muted yourself first, it leaves you alone.
 
 Tray icon: a dot with a vertical line through it. Grey while watching, cyan while Hush holds a mute. Right-click for status, version, Pause, Check for updates, Auto update and Quit.
 
 ## Install
-You need Python 3.10+ and the Discord desktop app.
+You need Python 3.9+ and the Discord desktop app.
 
 1. **Make your own Discord app.** Hush talks to Discord through its local RPC API, which needs an app you own.
    - Go to https://discord.com/developers/applications and click **New Application**. Name it Hush.
    - Open **OAuth2**. Under **Redirects**, add `http://localhost` and save.
    - Copy the **Client ID**. Click **Reset Secret** and copy the secret.
-2. **Run the installer** from this folder:
+2. **Run the installer** from this folder. On Windows:
    ```
    powershell -ExecutionPolicy Bypass -File install.ps1
    ```
    It asks for the Client ID and secret, then saves them as user env vars (`DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`). The secret is never shown or written to this folder.
+
+   On macOS:
+   ```n   ./install.sh
+   ```n   It asks for the same two values and saves them in `~/Library/Application Support/Hush/keys.json`, readable only by you. A login item starts Hush in the menu bar.
 3. **Authorize once.** Join a voice channel and dictate in Claude. Discord shows an Authorize popup. Accept it.
 
 Hush starts at login from then on.
@@ -37,10 +41,13 @@ Hush checks GitHub for a new release at startup and once a day, and installs it 
 powershell -ExecutionPolicy Bypass -File install.ps1 -Uninstall
 ```
 
+On macOS: `./install.sh --uninstall`.
+
 ## Files
 - `hush.py`: the app.
 - `test_hush.py`: self-check for the mute logic.
-- `%LOCALAPPDATA%\Hush\`: log and Discord login token. Delete `token.json` to authorize again.
+- `install.ps1` / `install.sh`: installers for Windows and macOS.
+- `%LOCALAPPDATA%\Hush\` (Windows) or `~/Library/Application Support/Hush/` (macOS): log and Discord login token. Delete `token.json` to authorize again.
 
 ## Limits
 - If you mute yourself while dictating, Hush can't tell that apart from its own mute and unmutes you when you stop.
