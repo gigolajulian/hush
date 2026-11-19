@@ -342,7 +342,7 @@ def _draw_icon(on):
     if WIN: return im.resize((64, 64), Image.LANCZOS)
     # pystray stretches the image to the full menu bar height on macOS, so pad it to sit like a system icon
     pad = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
-    pad.paste(im.resize((38, 38), Image.LANCZOS), (13, 13))
+    pad.paste(im.resize((46, 46), Image.LANCZOS), (9, 9))
     return pad
 
 
