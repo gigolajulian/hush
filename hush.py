@@ -1,42 +1,50 @@
 """Hush: mutes Discord while the Claude app is capturing the mic, unmutes only if it muted.
 
-Signal: WASAPI capture session of claude.exe goes ACTIVE while dictating.
+Signal: Windows, the WASAPI capture session of claude.exe goes ACTIVE while dictating.
+        macOS, the CoreAudio process object of Claude's helper reports running input.
 Action: Discord local RPC (GET/SET_VOICE_SETTINGS), so the real mute state is read first.
 """
-import io, json, os, shutil, struct, subprocess, sys, threading, time, uuid, urllib.parse, urllib.request, zipfile
+import ctypes, ctypes.util, io, json, os, shutil, socket, struct, subprocess, sys, threading, time, uuid
+import urllib.error, urllib.parse, urllib.request, zipfile
 from pathlib import Path
 
-import winreg
+import pystray
+from PIL import Image, ImageDraw
 
-import comtypes, psutil, pystray
-from comtypes import CLSCTX_ALL
-from PIL import Image, ImageDraw, ImageFont
-from pycaw.api.mmdeviceapi import IMMDeviceEnumerator
-from pycaw.constants import CLSID_MMDeviceEnumerator
-from pycaw.pycaw import IAudioSessionControl2, IAudioSessionManager2
+WIN = sys.platform == "win32"
+if WIN:
+    import winreg
+    import comtypes, psutil
+    from comtypes import CLSCTX_ALL
+    from pycaw.api.mmdeviceapi import IMMDeviceEnumerator
+    from pycaw.constants import CLSID_MMDeviceEnumerator
+    from pycaw.pycaw import IAudioSessionControl2, IAudioSessionManager2
 
 VERSION = "1.1.2"
 REPO = "gigolajulian/hush"
 APP_DIR = Path(__file__).resolve().parent
 UPDATE_EVERY = 24 * 3600
 POLL = 0.25
-RELEASE_POLLS = 2  # inactive this many polls in a row before unmuting
-STATE_DIR = Path(os.environ["LOCALAPPDATA"]) / "Hush"
+RELEASE_POLLS = 2 if WIN else 6  # inactive polls before unmuting; the Mac helper drops input for under a second mid-dictation
+STATE_DIR = Path(os.environ["LOCALAPPDATA"]) / "Hush" if WIN else Path.home() / "Library" / "Application Support" / "Hush"
+KEYS_FILE = STATE_DIR / "keys.json"  # macOS: Discord keys, mode 600, written by install.sh
+NO_WINDOW = {"creationflags": subprocess.CREATE_NO_WINDOW} if WIN else {}
 TOKEN_FILE = STATE_DIR / "token.json"
 LOG_FILE = STATE_DIR / "hush.log"
 SETTINGS_FILE = STATE_DIR / "settings.json"
 
 
 def env(name):
-    """Env var, falling back to the user registry so vars set after login work without a restart."""
+    """Env var, then the user registry (Windows, so vars set after login work without a restart) or keys.json (macOS)."""
     if os.environ.get(name): return os.environ[name]
     try:
+        if not WIN: return json.loads(KEYS_FILE.read_text(encoding="utf-8")).get(name)
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as k: return winreg.QueryValueEx(k, name)[0]
-    except OSError: return None
+    except (OSError, ValueError): return None
 
 
 def log(msg):
-    STATE_DIR.mkdir(exist_ok=True)
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
     with open(LOG_FILE, "a", encoding="utf-8") as f:
         f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}\n")
 
@@ -76,6 +84,56 @@ class ClaudeMic:
         return False
 
 
+class MacClaudeMic:
+    """CoreAudio process objects (macOS 14+): is any Claude process running audio input? Needs no mic permission."""
+
+    class _Addr(ctypes.Structure):
+        _fields_ = [("sel", ctypes.c_uint32), ("scope", ctypes.c_uint32), ("elem", ctypes.c_uint32)]
+
+    def __init__(self):
+        self.ca = ctypes.CDLL(ctypes.util.find_library("CoreAudio"))
+        self.cf = ctypes.CDLL(ctypes.util.find_library("CoreFoundation"))
+        P = ctypes.POINTER
+        self.ca.AudioObjectGetPropertyDataSize.argtypes = [ctypes.c_uint32, P(self._Addr), ctypes.c_uint32, ctypes.c_void_p, P(ctypes.c_uint32)]
+        self.ca.AudioObjectGetPropertyData.argtypes = [ctypes.c_uint32, P(self._Addr), ctypes.c_uint32, ctypes.c_void_p, P(ctypes.c_uint32), ctypes.c_void_p]
+        self.cf.CFStringGetCString.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_long, ctypes.c_uint32]
+        self.cf.CFRelease.argtypes = [ctypes.c_void_p]
+        self.names = {}
+
+    def _get(self, obj, sel, buf):
+        a = self._Addr(struct.unpack(">I", sel.encode())[0], struct.unpack(">I", b"glob")[0], 0)
+        n = ctypes.c_uint32(ctypes.sizeof(buf))
+        return self.ca.AudioObjectGetPropertyData(obj, ctypes.byref(a), 0, None, ctypes.byref(n), ctypes.byref(buf))
+
+    def _bundle(self, obj):
+        if obj not in self.names:
+            s, b = ctypes.c_void_p(), ctypes.create_string_buffer(512)
+            if self._get(obj, "pbid", s) or not s.value: return ""
+            self.cf.CFStringGetCString(s, b, 512, 0x08000100)  # UTF-8
+            self.cf.CFRelease(s)
+            self.names[obj] = b.value.decode()
+        return self.names[obj]
+
+    def active(self):
+        a = self._Addr(struct.unpack(">I", b"prs#")[0], struct.unpack(">I", b"glob")[0], 0)
+        n = ctypes.c_uint32()
+        if self.ca.AudioObjectGetPropertyDataSize(1, ctypes.byref(a), 0, None, ctypes.byref(n)): return False
+        objs = (ctypes.c_uint32 * (n.value // 4))()
+        self.ca.AudioObjectGetPropertyData(1, ctypes.byref(a), 0, None, ctypes.byref(n), objs)
+        for obj in objs:
+            running = ctypes.c_uint32()
+            if self._bundle(obj).startswith("com.anthropic.claudefordesktop") and not self._get(obj, "piri", running) and running.value:
+                return True
+        return False
+
+
+def discord_socket_dir():
+    """Where Discord puts discord-ipc-N on macOS; launchd agents may not have TMPDIR set."""
+    if os.environ.get("TMPDIR"): return os.environ["TMPDIR"]
+    try: return subprocess.run(["getconf", "DARWIN_USER_TEMP_DIR"], capture_output=True, text=True).stdout.strip() or "/tmp"
+    except OSError: return "/tmp"
+
+
 # ---------- discord rpc ----------
 class Discord:
     SCOPES = ["rpc", "rpc.voice.read", "rpc.voice.write"]
@@ -86,6 +144,7 @@ class Discord:
     def _send(self, op, payload):
         data = json.dumps(payload).encode()
         self.pipe.write(struct.pack("<ii", op, len(data)) + data)
+        self.pipe.flush()
 
     def _recv(self):
         op, n = struct.unpack("<ii", self.pipe.read(8))
@@ -107,7 +166,7 @@ class Discord:
                                      {"Content-Type": "application/x-www-form-urlencoded", "User-Agent": "Hush (local, 1.0)"})
         tok = json.loads(urllib.request.urlopen(req, timeout=15).read())
         tok["expires_at"] = time.time() + tok["expires_in"] - 60
-        STATE_DIR.mkdir(exist_ok=True)
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
         TOKEN_FILE.write_text(json.dumps(tok), encoding="utf-8")
         return tok
 
@@ -124,7 +183,14 @@ class Discord:
             raise RuntimeError("DISCORD_CLIENT_ID / DISCORD_CLIENT_SECRET not set")
         for i in range(10):
             try:
-                self.pipe = open(rf"\\.\pipe\discord-ipc-{i}", "r+b", buffering=0)
+                if WIN:
+                    self.pipe = open(rf"\\.\pipe\discord-ipc-{i}", "r+b", buffering=0)
+                else:
+                    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                    try: s.connect(os.path.join(discord_socket_dir(), f"discord-ipc-{i}"))
+                    except OSError: s.close(); raise
+                    self.pipe = s.makefile("rwb")  # buffered, so read(n) waits for all n bytes
+                    s.close()  # the file object keeps the connection open until it is closed
                 break
             except OSError:
                 continue
@@ -202,7 +268,7 @@ def load_settings():
 
 
 def save_settings(s):
-    STATE_DIR.mkdir(exist_ok=True)
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
     SETTINGS_FILE.write_text(json.dumps(s), encoding="utf-8")
 
 
@@ -237,8 +303,7 @@ def newer_release():
 def apply_update(tag, zip_url, app_dir=APP_DIR):
     """Replace the app files with the release. Git checkouts pull instead, so a dev tree is never overwritten."""
     if (app_dir / ".git").exists():
-        subprocess.run(["git", "-C", str(app_dir), "pull", "--ff-only", "-q"], check=True,
-                       creationflags=subprocess.CREATE_NO_WINDOW)
+        subprocess.run(["git", "-C", str(app_dir), "pull", "--ff-only", "-q"], check=True, **NO_WINDOW)
     else:
         with zipfile.ZipFile(io.BytesIO(_get(zip_url, timeout=60))) as z:
             for info in z.infolist():
@@ -248,14 +313,17 @@ def apply_update(tag, zip_url, app_dir=APP_DIR):
                 if app_dir.resolve() not in dest.parents: continue  # refuse paths that escape the app folder
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 with z.open(info) as src, open(dest, "wb") as out: shutil.copyfileobj(src, out)
-    py = app_dir / ".venv" / "Scripts" / "python.exe"
+    py = app_dir / ".venv" / ("Scripts/python.exe" if WIN else "bin/python")
     if py.exists():
         subprocess.run([str(py), "-m", "pip", "install", "-q", "--disable-pip-version-check", "-r",
-                        str(app_dir / "requirements.txt")], check=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                        str(app_dir / "requirements.txt")], check=True, **NO_WINDOW)
     log(f"updated to {tag}")
 
 
 def restart():
+    if not WIN:  # the LaunchAgent sets AbandonProcessGroup, so this child outlives us
+        subprocess.Popen([sys.executable, str(APP_DIR / "hush.py")], cwd=str(APP_DIR), start_new_session=True)
+        return
     exe = Path(sys.executable)
     pyw = exe.with_name("pythonw.exe") if exe.with_name("pythonw.exe").exists() else exe
     subprocess.Popen([str(pyw), str(APP_DIR / "hush.py")], cwd=str(APP_DIR),
@@ -286,8 +354,12 @@ def main():
     settings = load_settings()
     icon = pystray.Icon("hush", icon_img(False), "Hush")
 
+    def notify(msg):
+        try: icon.notify(msg, "Hush")
+        except Exception: pass  # not every pystray backend has notifications; never let that block an update
+
     def loop():
-        mic, d = ClaudeMic(), Discord()
+        mic, d = (ClaudeMic() if WIN else MacClaudeMic()), Discord()
         m, retry_at = Muter(d), 0
         while not state["stop"]:
             state["busy"] = m.talking or m.we_muted  # never restart for an update mid-dictation
@@ -326,19 +398,19 @@ def main():
             rel = newer_release()
             if not rel:
                 state["update"] = f"up to date ({VERSION})"
-                if manual: icon.notify(f"Hush {VERSION} is up to date.", "Hush")
+                if manual: notify(f"Hush {VERSION} is up to date.")
                 return
             state["update"] = f"updating to {rel[0]}"
             while state["busy"] and not state["stop"]: time.sleep(1)
             if state["stop"]: return
             apply_update(*rel)
-            icon.notify(f"Updated to {rel[0]}. Restarting.", "Hush")
+            notify(f"Updated to {rel[0]}. Restarting.")
             restart()
             shutdown()
         except Exception as e:
             log(f"update error {e!r}")
             state["update"] = "update check failed"
-            if manual: icon.notify("Update check failed. See the log.", "Hush")
+            if manual: notify("Update check failed. See the log.")
         finally:
             check_lock.release()
 
