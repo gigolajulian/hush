@@ -2,6 +2,7 @@
 import hush
 
 hush.log = lambda msg: None
+hush.RELEASE_POLLS = 2  # the sequences below assume the Windows hold; macOS uses a longer one
 
 
 class FakeDiscord:
