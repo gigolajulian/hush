@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+  html, body { margin: 0; }
+  .card { width: 1280px; height: 640px; background: #0d0e10; color: #e8e8e6; position: relative; overflow: hidden;
+          font-family: "Segoe UI", Inter, system-ui, sans-serif; }
+  .mono { font-family: Consolas, "Cascadia Mono", monospace; }
+  .tag { position: absolute; left: 112px; top: 72px; font-size: 20px; letter-spacing: 3px; color: #00c8dc; }
+  .word { position: absolute; left: 104px; top: 128px; font-size: 168px; font-weight: 600; letter-spacing: -6px; line-height: 1; }
+  .word i { font-style: normal; color: #00c8dc; }
+  .line { position: absolute; left: 114px; top: 330px; font-size: 26px; color: #8a8d92; }
+  .foot { position: absolute; left: 114px; bottom: 56px; font-size: 19px; color: #55585d; letter-spacing: 1px; }
+  /* two system bars, each holding the live icon */
+  .bar { position: absolute; right: 96px; width: 420px; height: 44px; border-radius: 10px; background: #17191c;
+         display: flex; align-items: center; gap: 22px; padding: 0 18px; box-sizing: border-box; color: #6d7075; font-size: 15px; }
+  .bar .lbl { position: absolute; left: 0; top: -30px; font-size: 15px; letter-spacing: 2px; color: #55585d; }
+  .mac { top: 214px; justify-content: flex-end; }
+  .win { top: 340px; justify-content: flex-end; }
+  .ic { width: 22px; height: 22px; }
+  .dim { width: 16px; height: 16px; border-radius: 4px; background: #2a2d31; }
+  .live { color: #e8e8e6; }
+</style></head><body>
+<div class="card">
+  <div class="tag mono">NEW IN 1.2.0 | NOW ON MAC</div>
+  <div class="word">hush<i>.</i></div>
+  <div class="line mono">mutes discord while you dictate to claude</div>
+
+  <div class="bar mac mono"><span class="lbl">MACOS MENU BAR</span>
+    <span class="dim"></span><span class="dim"></span>
+    <svg class="ic" viewBox="0 0 64 64"><circle cx="32" cy="32" r="24" fill="#00c8dc"/><rect x="26" y="0" width="12" height="64" fill="#17191c"/><rect x="29" y="1" width="6" height="62" rx="3" fill="#fff"/></svg>
+    <span class="live">Wed 1:24 AM</span>
+  </div>
+  <div class="bar win mono"><span class="lbl">WINDOWS TRAY</span>
+    <span class="dim"></span><span class="dim"></span>
+    <svg class="ic" viewBox="0 0 64 64"><circle cx="32" cy="32" r="24" fill="#00c8dc"/><rect x="26" y="0" width="12" height="64" fill="#17191c"/><rect x="29" y="1" width="6" height="62" rx="3" fill="#fff"/></svg>
+    <span class="live">1:24 AM</span>
+  </div>
+
+  <div class="foot mono">windows + macos | free, mit | github.com/gigolajulian/hush</div>
+</div>
+</body></html>
