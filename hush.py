@@ -339,7 +339,11 @@ def _draw_icon(on):
     dr.ellipse((8 * s, 8 * s, 56 * s, 56 * s), fill=(0, 200, 220, 255) if on else (120, 122, 126, 255))
     dr.rectangle((26 * s, 0, 38 * s, 64 * s), fill=(0, 0, 0, 0))  # transparent gap around the line
     dr.rounded_rectangle((29 * s, 1 * s, 35 * s, 63 * s), radius=3 * s, fill=(255, 255, 255, 255) if on else (200, 200, 198, 255))
-    return im.resize((64, 64), Image.LANCZOS)
+    if WIN: return im.resize((64, 64), Image.LANCZOS)
+    # pystray stretches the image to the full menu bar height on macOS, so pad it to sit like a system icon
+    pad = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+    pad.paste(im.resize((38, 38), Image.LANCZOS), (13, 13))
+    return pad
 
 
 ICONS = {True: _draw_icon(True), False: _draw_icon(False)}
