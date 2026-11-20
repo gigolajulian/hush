@@ -20,7 +20,7 @@ if WIN:
     from pycaw.constants import CLSID_MMDeviceEnumerator
     from pycaw.pycaw import IAudioSessionControl2, IAudioSessionManager2
 
-VERSION = "1.2.0"
+VERSION = "1.2.1"
 REPO = "gigolajulian/hush"
 APP_DIR = Path(__file__).resolve().parent
 UPDATE_EVERY = 24 * 3600
@@ -229,6 +229,7 @@ class Discord:
 
     def muted(self): return self.call("GET_VOICE_SETTINGS")["mute"]
     def set_mute(self, v): self.call("SET_VOICE_SETTINGS", {"mute": v})
+    def in_call(self): return bool(self.call("GET_SELECTED_VOICE_CHANNEL"))  # null when not in voice
 
 
 # ---------- logic ----------
@@ -243,7 +244,7 @@ class Muter:
             self.idle_polls = 0
             if not self.talking:
                 self.talking = True
-                if not self.d.muted():
+                if self.d.in_call() and not self.d.muted():
                     self.d.set_mute(True)
                     self.we_muted = True
                     log("muted discord")

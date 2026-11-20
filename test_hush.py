@@ -6,13 +6,14 @@ hush.RELEASE_POLLS = 2  # the sequences below assume the Windows hold; macOS use
 
 
 class FakeDiscord:
-    def __init__(self, muted): self.m, self.calls = muted, []
+    def __init__(self, muted, call=True): self.m, self.calls, self.call = muted, [], call
     def muted(self): return self.m
+    def in_call(self): return self.call
     def set_mute(self, v): self.m = v; self.calls.append(v)
 
 
-def run(start_muted, seq, user=None):
-    d = FakeDiscord(start_muted)
+def run(start_muted, seq, user=None, call=True):
+    d = FakeDiscord(start_muted, call)
     m = hush.Muter(d)
     for i, a in enumerate(seq):
         if user and i in user: d.m = user[i]
@@ -28,6 +29,8 @@ d = run(False, [1, 0, 1, 1]); assert d.calls == [True]
 d = run(True, [1, 1, 0, 0, 0]); assert d.calls == [] and d.m
 # user unmutes mid-dictation: helper does not re-touch
 d = run(False, [1, 1, 0, 0], user={1: False}); assert d.calls == [True]
+# not in a voice call: never touched
+d = run(False, [1, 1, 0, 0], call=False); assert d.calls == [] and not d.m
 
 # version compare
 assert hush.vtuple("v1.10.0") > hush.vtuple("1.9.3") and hush.vtuple("v1.1.0") == hush.vtuple("1.1.0")
