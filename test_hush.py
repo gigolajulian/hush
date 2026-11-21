@@ -9,6 +9,9 @@ class FakeDiscord:
     def __init__(self, muted, call=True): self.m, self.calls, self.call = muted, [], call
     def muted(self): return self.m
     def in_call(self): return self.call
+    vol = 80
+    def input_volume(self): return self.vol
+    def set_input_volume(self, v): self.vol = v; self.calls.append(("vol", v))
     def set_mute(self, v): self.m = v; self.calls.append(v)
 
 
@@ -31,6 +34,18 @@ d = run(True, [1, 1, 0, 0, 0]); assert d.calls == [] and d.m
 d = run(False, [1, 1, 0, 0], user={1: False}); assert d.calls == [True]
 # not in a voice call: never touched
 d = run(False, [1, 1, 0, 0], call=False); assert d.calls == [] and not d.m
+
+# quiet mute: volume to 0 and back, mute flag never touched
+hush.remember_volume = lambda v: None
+def run_quiet(seq, user_vol=None):
+    d = FakeDiscord(False); m = hush.Muter(d, quiet=lambda: True)
+    for i, a in enumerate(seq):
+        if user_vol and i in user_vol: d.vol = user_vol[i]
+        m.tick(a)
+    return d
+d = run_quiet([1, 1, 0, 0]); assert d.calls == [("vol", 0), ("vol", 80)] and not d.m
+# user moves the slider mid-dictation: helper leaves it
+d = run_quiet([1, 1, 0, 0], user_vol={1: 50}); assert d.calls == [("vol", 0)] and d.vol == 50
 
 # version compare
 assert hush.vtuple("v1.10.0") > hush.vtuple("1.9.3") and hush.vtuple("v1.1.0") == hush.vtuple("1.1.0")

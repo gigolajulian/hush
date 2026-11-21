@@ -20,7 +20,7 @@ if WIN:
     from pycaw.constants import CLSID_MMDeviceEnumerator
     from pycaw.pycaw import IAudioSessionControl2, IAudioSessionManager2
 
-VERSION = "1.2.1"
+VERSION = "1.3.0"
 REPO = "gigolajulian/hush"
 APP_DIR = Path(__file__).resolve().parent
 UPDATE_EVERY = 24 * 3600
@@ -32,6 +32,7 @@ NO_WINDOW = {"creationflags": subprocess.CREATE_NO_WINDOW} if WIN else {}
 TOKEN_FILE = STATE_DIR / "token.json"
 LOG_FILE = STATE_DIR / "hush.log"
 SETTINGS_FILE = STATE_DIR / "settings.json"
+QUIET_FILE = STATE_DIR / "quiet.json"
 
 
 def env(name):
@@ -230,14 +231,31 @@ class Discord:
     def muted(self): return self.call("GET_VOICE_SETTINGS")["mute"]
     def set_mute(self, v): self.call("SET_VOICE_SETTINGS", {"mute": v})
     def in_call(self): return bool(self.call("GET_SELECTED_VOICE_CHANNEL"))  # null when not in voice
+    def input_volume(self): return self.call("GET_VOICE_SETTINGS")["input"]["volume"]
+    def set_input_volume(self, v): self.call("SET_VOICE_SETTINGS", {"input": {"volume": v}})
+
+
+def remember_volume(v):
+    """Quiet mute keeps the volume it took on disk, so a crash mid-dictation can be undone at next start."""
+    if v is None: QUIET_FILE.unlink(missing_ok=True)
+    else: STATE_DIR.mkdir(parents=True, exist_ok=True); QUIET_FILE.write_text(json.dumps(v), encoding="utf-8")
+
+
+def restore_volume(d):
+    """After a crash, give back a quiet mute that was never released."""
+    try: v = json.loads(QUIET_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError): return
+    if d.input_volume() == 0: d.set_input_volume(v); log(f"restored mic volume {v}")
+    remember_volume(None)
 
 
 # ---------- logic ----------
 class Muter:
     """Edge logic, kept free of I/O so it can be self-checked."""
 
-    def __init__(self, discord):
+    def __init__(self, discord, quiet=lambda: False):
         self.d, self.we_muted, self.talking, self.idle_polls = discord, False, False, 0
+        self.quiet, self.saved_volume = quiet, None  # quiet: drop mic volume to 0 instead of muting (no Discord sound)
 
     def tick(self, mic_active):
         if mic_active:
@@ -245,9 +263,17 @@ class Muter:
             if not self.talking:
                 self.talking = True
                 if self.d.in_call() and not self.d.muted():
-                    self.d.set_mute(True)
+                    if self.quiet():
+                        v = self.d.input_volume()
+                        if v == 0: return  # already silent
+                        remember_volume(v)
+                        self.d.set_input_volume(0)
+                        self.saved_volume = v
+                        log(f"quiet muted discord (mic volume {v} -> 0)")
+                    else:
+                        self.d.set_mute(True)
+                        log("muted discord")
                     self.we_muted = True
-                    log("muted discord")
         elif self.talking:
             self.idle_polls += 1
             if self.idle_polls >= RELEASE_POLLS:
@@ -255,7 +281,13 @@ class Muter:
                 self.release()
 
     def release(self):
-        if self.we_muted:
+        if self.we_muted and self.saved_volume is not None:
+            v, self.we_muted, self.saved_volume = self.saved_volume, False, None
+            if self.d.input_volume() == 0:  # if the user already moved the slider, leave it
+                self.d.set_input_volume(v)
+                log(f"quiet unmuted discord (mic volume {v})")
+            remember_volume(None)
+        elif self.we_muted:
             self.we_muted = False
             if self.d.muted():  # if the user already unmuted, leave it
                 self.d.set_mute(False)
@@ -264,8 +296,9 @@ class Muter:
 
 # ---------- updates ----------
 def load_settings():
-    try: return {"auto_update": True, **json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))}
-    except (OSError, ValueError): return {"auto_update": True}
+    defaults = {"auto_update": True, "quiet_mute": False}
+    try: return {**defaults, **json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))}
+    except (OSError, ValueError): return defaults
 
 
 def save_settings(s):
@@ -365,14 +398,16 @@ def main():
 
     def loop():
         mic, d = (ClaudeMic() if WIN else MacClaudeMic()), Discord()
-        m, retry_at = Muter(d), 0
+        m, retry_at = Muter(d, lambda: settings["quiet_mute"]), 0
         while not state["stop"]:
             state["busy"] = m.talking or m.we_muted  # never restart for an update mid-dictation
             try:
                 if state["paused"]:
                     state["status"] = "paused"
                 elif time.time() >= retry_at:
-                    if not d.pipe: d.connect()  # connect up front so the tray shows the real Discord state
+                    if not d.pipe:
+                        d.connect()  # connect up front so the tray shows the real Discord state
+                        if not m.we_muted: restore_volume(d)
                     m.tick(mic.active())
                     state["status"] = "muting Discord" if m.we_muted else "connected to Discord"
             except Exception as e:
@@ -433,11 +468,16 @@ def main():
         settings["auto_update"] = not settings["auto_update"]
         save_settings(settings)
 
+    def toggle_quiet(_, __):
+        settings["quiet_mute"] = not settings["quiet_mute"]
+        save_settings(settings)
+
     icon.menu = pystray.Menu(
         pystray.MenuItem(lambda _: state["status"], None, enabled=False),
         pystray.MenuItem(lambda _: state["update"] or f"Hush {VERSION}", None, enabled=False),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Pause", toggle_pause, checked=lambda _: state["paused"]),
+        pystray.MenuItem("Quiet mute (no Discord sound)", toggle_quiet, checked=lambda _: settings["quiet_mute"]),
         pystray.MenuItem("Check for updates", lambda: threading.Thread(target=check, args=(True,), daemon=True).start()),
         pystray.MenuItem("Auto update", toggle_auto, checked=lambda _: settings["auto_update"]),
         pystray.MenuItem("Quit", lambda: shutdown()),
