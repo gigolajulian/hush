@@ -444,6 +444,9 @@ def main():
     )
     loop_thread.start()
     threading.Thread(target=auto_updates, daemon=True).start()
+    if sys.platform == "darwin":
+        import AppKit  # menu bar only: an accessory app gets no Dock icon
+        AppKit.NSApplication.sharedApplication().setActivationPolicy_(AppKit.NSApplicationActivationPolicyAccessory)
     icon.run()
 
 
