@@ -11,7 +11,9 @@ Windows and macOS (14 or later). One tray or menu bar icon. About 0.02% CPU.
 - When you start dictating, it asks Discord whether you're muted. If you aren't, it mutes you.
 - When you stop, it unmutes you only if it muted you and you're still muted. If you muted yourself first, it leaves you alone.
 
-Tray icon: a dot with a vertical line through it. Grey while watching, cyan while Hush holds a mute. Right-click for status, version, Pause, Check for updates, Auto update and Quit.
+Tray icon: a dot with a vertical line through it. Grey while watching, cyan while Hush holds a mute. Right-click for status, version, Pause, Quiet mute, Check for updates, Auto update and Quit.
+
+Hush only acts while you are in a Discord voice call. **Quiet mute** skips Discord's mute sound: instead of muting, Hush sets your Discord mic volume to 0 while you dictate and puts it back after. People in the call won't see a muted icon. If Hush stops mid-dictation, it restores the volume at next start.
 
 ## Install
 You need Python 3.9+ and the Discord desktop app.
