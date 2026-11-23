@@ -337,23 +337,19 @@ def newer_release():
 
 
 def apply_update(tag, zip_url, sig_url, app_dir=APP_DIR):
-    """Replace the app files with the release, only if its zip is signed. Git checkouts pull instead, so a dev tree is
-    never overwritten."""
-    if (app_dir / ".git").exists():
-        subprocess.run(["git", "-C", str(app_dir), "pull", "--ff-only", "-q"], check=True, **NO_WINDOW)
-    else:
-        if not zip_url or not sig_url: raise RuntimeError(f"{tag} is not signed, not installing")
-        data = _get(zip_url, timeout=60)
-        if not signed(tag, data, _get(sig_url).decode("ascii", "replace")):
-            raise RuntimeError(f"{tag} signature does not match, not installing")
-        with zipfile.ZipFile(io.BytesIO(data)) as z:
-            for info in z.infolist():
-                rel = Path(*Path(info.filename).parts[1:])  # drop the "owner-repo-sha/" root folder
-                if info.is_dir() or not rel.parts: continue
-                dest = (app_dir / rel).resolve()
-                if app_dir.resolve() not in dest.parents: continue  # refuse paths that escape the app folder
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                with z.open(info) as src, open(dest, "wb") as out: shutil.copyfileobj(src, out)
+    """Replace the app files with the release, only if its zip is signed. Never called on a git clone (see check)."""
+    if not zip_url or not sig_url: raise RuntimeError(f"{tag} is not signed, not installing")
+    data = _get(zip_url, timeout=60)
+    if not signed(tag, data, _get(sig_url).decode("ascii", "replace")):
+        raise RuntimeError(f"{tag} signature does not match, not installing")
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        for info in z.infolist():
+            rel = Path(*Path(info.filename).parts[1:])  # drop the "hush/" root folder
+            if info.is_dir() or not rel.parts: continue
+            dest = (app_dir / rel).resolve()
+            if app_dir.resolve() not in dest.parents: continue  # refuse paths that escape the app folder
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            with z.open(info) as src, open(dest, "wb") as out: shutil.copyfileobj(src, out)
     py = app_dir / ".venv" / ("Scripts/python.exe" if WIN else "bin/python")
     if py.exists():
         subprocess.run([str(py), "-m", "pip", "install", "-q", "--disable-pip-version-check", "-r",
@@ -517,6 +513,10 @@ def main():
             if not rel:
                 state["update"] = f"up to date ({VERSION})"
                 if manual: notify(f"Hush {VERSION} is up to date.")
+                return
+            if (APP_DIR / ".git").exists():  # a git pull would run unsigned code, so a clone only says so
+                state["update"] = f"{rel[0]} is out: git pull"
+                if manual: notify(f"Hush {rel[0]} is out. This copy is a git clone: update it with git pull.")
                 return
             state["update"] = f"updating to {rel[0]}"
             while state["busy"] and not state["stop"]: time.sleep(1)

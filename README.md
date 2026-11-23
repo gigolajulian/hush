@@ -36,7 +36,7 @@ You need Python 3.9+ and the Discord desktop app.
 Hush starts at login from then on.
 
 ## Updates
-Hush checks GitHub for a new release at startup and once a day, and installs it when you aren't dictating. It never restarts mid-dictation. Right-click the tray icon for **Check for updates**, or untick **Auto update** to turn it off. A git clone updates with `git pull`; a zip install gets its files replaced.
+Hush checks GitHub for a new release at startup and once a day, and installs it when you aren't dictating. It never restarts mid-dictation. Right-click the tray icon for **Check for updates**, or untick **Auto update** to turn it off. A zip install gets its files replaced, only after the release zip's signature checks out against the key built into Hush. A git clone only tells you a release is out: update it with `git pull` yourself.
 
 ## Uninstall
 ```
