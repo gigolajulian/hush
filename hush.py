@@ -4,7 +4,7 @@ Signal: Windows, the WASAPI capture session of claude.exe goes ACTIVE while dict
         macOS, the CoreAudio process object of Claude's helper reports running input.
 Action: Discord local RPC (GET/SET_VOICE_SETTINGS), so the real mute state is read first.
 """
-import ctypes, ctypes.util, io, json, os, shutil, socket, struct, subprocess, sys, threading, time, uuid
+import base64, ctypes, ctypes.util, hashlib, io, json, os, shutil, socket, struct, subprocess, sys, threading, time, uuid
 import urllib.error, urllib.parse, urllib.request, zipfile
 from pathlib import Path
 
@@ -320,13 +320,15 @@ def _get(url, timeout=20):
 
 
 def latest_release():
-    """(tag, zip_url) of the newest GitHub release, or None if there is none."""
+    """(tag, zip_url, sig_url) of the newest GitHub release, or None if there is none. The urls are None when the
+    release has no signed zip; apply_update then refuses it."""
     try:
         r = json.loads(_get(f"https://api.github.com/repos/{REPO}/releases/latest"))
     except urllib.error.HTTPError as e:
         if e.code == 404: return None
         raise
-    return r["tag_name"], r["zipball_url"]
+    tag, assets = r["tag_name"], {a["name"]: a["browser_download_url"] for a in r.get("assets", [])}
+    return tag, assets.get(f"hush-{tag}.zip"), assets.get(f"hush-{tag}.zip.sig")
 
 
 def newer_release():
@@ -334,12 +336,17 @@ def newer_release():
     return rel if rel and vtuple(rel[0]) > vtuple(VERSION) else None
 
 
-def apply_update(tag, zip_url, app_dir=APP_DIR):
-    """Replace the app files with the release. Git checkouts pull instead, so a dev tree is never overwritten."""
+def apply_update(tag, zip_url, sig_url, app_dir=APP_DIR):
+    """Replace the app files with the release, only if its zip is signed. Git checkouts pull instead, so a dev tree is
+    never overwritten."""
     if (app_dir / ".git").exists():
         subprocess.run(["git", "-C", str(app_dir), "pull", "--ff-only", "-q"], check=True, **NO_WINDOW)
     else:
-        with zipfile.ZipFile(io.BytesIO(_get(zip_url, timeout=60))) as z:
+        if not zip_url or not sig_url: raise RuntimeError(f"{tag} is not signed, not installing")
+        data = _get(zip_url, timeout=60)
+        if not signed(tag, data, _get(sig_url).decode("ascii", "replace")):
+            raise RuntimeError(f"{tag} signature does not match, not installing")
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
             for info in z.infolist():
                 rel = Path(*Path(info.filename).parts[1:])  # drop the "owner-repo-sha/" root folder
                 if info.is_dir() or not rel.parts: continue
@@ -362,6 +369,77 @@ def restart():
     pyw = exe.with_name("pythonw.exe") if exe.with_name("pythonw.exe").exists() else exe
     subprocess.Popen([str(pyw), str(APP_DIR / "hush.py")], cwd=str(APP_DIR),
                      creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP)
+
+
+# ---------- update signature ----------
+# Release zips carry an ed25519 signature from a key that lives only on Julian's PC and never touches GitHub, so
+# someone who takes over the GitHub account can't ship an update. Signed text: "Hush <version> <sha256>\n", so an
+# old signed zip can't be re-posted as a newer version. The stdlib has no ed25519, so this is the RFC 8032 section 6
+# reference verifier, unchanged apart from names. test_hush.py checks it against the RFC test vector.
+PUBKEY = bytes.fromhex("f20732114f698cd3f6569e9fb8165edc8426c54e16767f15d95c45363ba1d024")
+_P = 2**255 - 19
+_Q = 2**252 + 27742317777372353535851937790883648493
+_D = -121665 * pow(121666, _P - 2, _P) % _P
+_SQRT_M1 = pow(2, (_P - 1) // 4, _P)
+
+
+def _add(P, Q):
+    A, B = (P[1] - P[0]) * (Q[1] - Q[0]) % _P, (P[1] + P[0]) * (Q[1] + Q[0]) % _P
+    C, D = 2 * P[3] * Q[3] * _D % _P, 2 * P[2] * Q[2] % _P
+    E, F, G, H = B - A, D - C, D + C, B + A
+    return (E * F, G * H, F * G, E * H)
+
+
+def _mul(s, P):
+    Q = (0, 1, 1, 0)
+    while s > 0:
+        if s & 1: Q = _add(Q, P)
+        P = _add(P, P)
+        s >>= 1
+    return Q
+
+
+def _equal(P, Q):
+    return (P[0] * Q[2] - Q[0] * P[2]) % _P == 0 and (P[1] * Q[2] - Q[1] * P[2]) % _P == 0
+
+
+def _recover_x(y, sign):
+    if y >= _P: return None
+    x2 = (y * y - 1) * pow(_D * y * y + 1, _P - 2, _P)
+    if x2 == 0: return None if sign else 0
+    x = pow(x2, (_P + 3) // 8, _P)
+    if (x * x - x2) % _P != 0: x = x * _SQRT_M1 % _P
+    if (x * x - x2) % _P != 0: return None
+    if (x & 1) != sign: x = _P - x
+    return x
+
+
+def _decompress(s):
+    if len(s) != 32: return None
+    y = int.from_bytes(s, "little")
+    sign, y = y >> 255, y & ((1 << 255) - 1)
+    x = _recover_x(y, sign)
+    return None if x is None else (x, y, 1, x * y % _P)
+
+
+_GY = 4 * pow(5, _P - 2, _P) % _P
+_G = (_recover_x(_GY, 0), _GY, 1, _recover_x(_GY, 0) * _GY % _P)
+
+
+def ed25519_verify(public, msg, sig):
+    if len(public) != 32 or len(sig) != 64: return False
+    A, R = _decompress(public), _decompress(sig[:32])
+    if not A or not R: return False
+    s = int.from_bytes(sig[32:], "little")
+    if s >= _Q: return False
+    h = int.from_bytes(hashlib.sha512(sig[:32] + public + msg).digest(), "little") % _Q
+    return _equal(_mul(s, _G), _add(R, _mul(h, A)))
+
+
+def signed(tag, data, sig_b64, key=PUBKEY):
+    try: sig = base64.b64decode(sig_b64.strip(), validate=True)
+    except ValueError: return False
+    return ed25519_verify(key, f"Hush {tag.lstrip('v')} {hashlib.sha256(data).hexdigest()}\n".encode(), sig)
 
 
 # ---------- tray ----------
