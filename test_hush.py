@@ -58,11 +58,27 @@ with zipfile.ZipFile(buf, "w") as z:
     z.writestr("gigolajulian-hush-abc123/hush.py", "new")
     z.writestr("gigolajulian-hush-abc123/assets/icon.svg", "svg")
     z.writestr("gigolajulian-hush-abc123/../../evil.txt", "x")
-hush._get = lambda url, timeout=0: buf.getvalue()
+hush._get = lambda url, timeout=0: buf.getvalue() if url == "zip" else b"sig"
+real_signed = hush.signed
+hush.signed = lambda tag, data, sig: tag == "v9.9.9" and data == buf.getvalue() and sig == "sig"
 with tempfile.TemporaryDirectory() as t:
     app = Path(t) / "a" / "app"; app.mkdir(parents=True)
     (app / "hush.py").write_text("old")
-    hush.apply_update("v9.9.9", "zip", app_dir=app)
+    for tag, z, s in (("v9.9.8", "zip", "sig"), ("v9.9.9", "zip", None), ("v9.9.9", None, None)):  # bad or no signature
+        try: hush.apply_update(tag, z, s, app_dir=app); raise AssertionError("unsigned update installed")
+        except RuntimeError as e: assert "not installing" in str(e)
+    assert (app / "hush.py").read_text() == "old"
+    hush.apply_update("v9.9.9", "zip", "sig", app_dir=app)
     assert (app / "hush.py").read_text() == "new" and (app / "assets" / "icon.svg").exists()
     assert not any(p.name == "evil.txt" for p in Path(t).rglob("*"))
+hush.signed = real_signed
+
+# ed25519 verifier: RFC 8032 test 1 (empty message), then tampered inputs
+pk = bytes.fromhex("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a")
+sig = bytes.fromhex("e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b")
+assert hush.ed25519_verify(pk, b"", sig)
+assert not hush.ed25519_verify(pk, b"x", sig)
+assert not hush.ed25519_verify(pk, b"", sig[:-1] + bytes([sig[-1] ^ 1]))
+assert not hush.ed25519_verify(hush.PUBKEY, b"", sig)
+assert not hush.signed("v1.0.0", b"zip", "not base64!") and not hush.signed("v1.0.0", b"zip", "")
 print("ok")

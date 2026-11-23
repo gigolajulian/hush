@@ -36,7 +36,14 @@ You need Python 3.9+ and the Discord desktop app.
 Hush starts at login from then on.
 
 ## Updates
-Hush checks GitHub for a new release at startup and once a day, and installs it when you aren't dictating. It never restarts mid-dictation. Right-click the tray icon for **Check for updates**, or untick **Auto update** to turn it off. A git clone updates with `git pull`; a zip install gets its files replaced.
+Hush checks GitHub for a new release at startup and once a day, and installs it when you aren't dictating. It never restarts mid-dictation. Right-click the tray icon for **Check for updates**, or untick **Auto update** to turn it off. A zip install gets its files replaced, only after the release zip's signature checks out against the key built into Hush. A git clone only tells you a release is out: update it with `git pull` yourself.
+
+## Release an update
+1. Bump `VERSION` in `hush.py`, commit and push.
+2. `gh release create v<version> --generate-notes`.
+3. `node scripts/sign-release.js --upload` zips the tag, signs it and uploads `hush-v<version>.zip` and its `.sig`. Zip installs refuse an update without them; older copies still update from GitHub's source zip.
+
+The key is `~/.release-keys/updates-ed25519.pem` on Julian's PC (or the file `RELEASE_SIGNING_KEY` points to). It never goes in a repo. If it is lost, installed copies can't update again, so keep a backup.
 
 ## Uninstall
 ```
