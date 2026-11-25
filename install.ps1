@@ -71,7 +71,7 @@ $values = @{
     DisplayIcon     = "$app\Hush.exe"
     InstallLocation = $app
     UninstallString = "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$app\uninstall.ps1`""
-    URLInfoAbout    = 'https://github.com/gigolajulian/hush'
+    URLInfoAbout    = 'https://github.com/loupedesk/hush'
 }
 foreach ($k in $values.Keys) { Set-ItemProperty $key $k $values[$k] }
 foreach ($k in 'NoModify', 'NoRepair') { Set-ItemProperty $key $k 1 -Type DWord }
