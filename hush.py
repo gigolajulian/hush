@@ -21,7 +21,7 @@ if WIN:
     from pycaw.pycaw import IAudioSessionControl2, IAudioSessionManager2
 
 VERSION = "1.4.0"
-REPO = "gigolajulian/hush"
+REPO = "loupedesk/hush"
 FROZEN = getattr(sys, "frozen", False)  # the PyInstaller Hush.exe
 APP_DIR = Path(sys.executable).parent if FROZEN else Path(__file__).resolve().parent
 UPDATE_EVERY = 24 * 3600
