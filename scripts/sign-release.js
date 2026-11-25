@@ -1,6 +1,7 @@
 // Builds and signs the release zip that installed copies update from. Run on Julian's PC (needs Node and gh):
 //   gh release create v1.3.2 --generate-notes        (bump VERSION in hush.py first, push the commit)
-//   node scripts/sign-release.js --upload            zips tag v<VERSION>, signs it, uploads zip + .sig
+//   .venv\Scripts\python scripts/build.py            builds dist\Hush.exe for this version
+//   node scripts/sign-release.js --upload            zips tag v<VERSION>, signs zip + exe, uploads them with their .sig
 // Old copies still update from GitHub's source zip; this one adds hush-<tag>.zip and its .sig next to it.
 // Key: RELEASE_SIGNING_KEY (a file path) or ~/.release-keys/updates-ed25519.pem. Never in a repo, never printed.
 const crypto = require('crypto');
@@ -20,10 +21,21 @@ const keyFile = process.env.RELEASE_SIGNING_KEY || path.join(os.homedir(), '.rel
 fs.mkdirSync(path.join(root, 'dist'), { recursive: true });
 const zip = path.join(root, 'dist', `hush-${tag}.zip`);
 execFileSync('git', ['-C', root, 'archive', '--format=zip', '--prefix=hush/', '-o', zip, ref], { stdio: 'inherit' });
-const text = Buffer.from(`Hush ${version} ${crypto.createHash('sha256').update(fs.readFileSync(zip)).digest('hex')}\n`);
-const sig = crypto.sign(null, text, fs.readFileSync(keyFile));
+// The installed Windows app updates from hush-<tag>.exe, built by install.ps1 (or scripts/build.py) into dist\Hush.exe.
+// An exe that reports an older version would see this release as new and reinstall itself forever, so check it.
+const built = path.join(root, 'dist', 'Hush.exe');
+if (!fs.existsSync(built)) throw new Error('no dist\\Hush.exe: run scripts/build.py from this tag first');
+const exeVersion = execFileSync('powershell', ['-NoProfile', '-Command', `(Get-Item '${built}').VersionInfo.ProductVersion`]).toString().trim();
+if (exeVersion !== version) throw new Error(`dist\\Hush.exe is ${exeVersion}, not ${version}: rebuild it`);
+const exe = path.join(root, 'dist', `hush-${tag}.exe`);
+fs.copyFileSync(built, exe);
+
 const key = crypto.createPublicKey({ key: Buffer.from('302a300506032b6570032100' + pub, 'hex'), format: 'der', type: 'spki' });
-if (!crypto.verify(null, text, key, sig)) throw new Error('this key does not match PUBKEY in hush.py');
-fs.writeFileSync(zip + '.sig', sig.toString('base64') + '\n');
-console.log(`signed ${path.basename(zip)}`);
-if (process.argv.includes('--upload')) execFileSync('gh', ['release', 'upload', tag, zip, zip + '.sig', '--clobber', '-R', 'gigolajulian/hush'], { stdio: 'inherit' });
+for (const file of [zip, exe]) {
+  const text = Buffer.from(`Hush ${version} ${crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')}\n`);
+  const sig = crypto.sign(null, text, fs.readFileSync(keyFile));
+  if (!crypto.verify(null, text, key, sig)) throw new Error('this key does not match PUBKEY in hush.py');
+  fs.writeFileSync(file + '.sig', sig.toString('base64') + '\n');
+  console.log(`signed ${path.basename(file)}`);
+}
+if (process.argv.includes('--upload')) execFileSync('gh', ['release', 'upload', tag, zip, zip + '.sig', exe, exe + '.sig', '--clobber', '-R', 'gigolajulian/hush'], { stdio: 'inherit' });

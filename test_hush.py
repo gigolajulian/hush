@@ -71,7 +71,26 @@ with tempfile.TemporaryDirectory() as t:
     hush.apply_update("v9.9.9", "zip", "sig", app_dir=app)
     assert (app / "hush.py").read_text() == "new" and (app / "assets" / "icon.svg").exists()
     assert not any(p.name == "evil.txt" for p in Path(t).rglob("*"))
+    # installed exe: the signed exe swaps in, the running one moves aside; unsigned never touches it
+    (app / "Hush.exe").write_bytes(b"old exe")
+    try: hush.apply_update("v9.9.9", "zip", None, app_dir=app, frozen=True); raise AssertionError("unsigned exe installed")
+    except RuntimeError: assert (app / "Hush.exe").read_bytes() == b"old exe"
+    hush.apply_update("v9.9.9", "zip", "sig", app_dir=app, frozen=True)
+    assert (app / "Hush.exe").read_bytes() == buf.getvalue() and (app / "Hush.exe.old").read_bytes() == b"old exe"
+    assert not (app / "Hush.exe.new").exists()
 hush.signed = real_signed
+
+# release assets: the exe picks hush-<tag>.exe, a source copy the zip; none means unsigned
+import json
+rel = {"tag_name": "v2.0.0", "assets": [{"name": n, "browser_download_url": "u/" + n} for n in
+       ("hush-v2.0.0.zip", "hush-v2.0.0.zip.sig", "hush-v2.0.0.exe", "hush-v2.0.0.exe.sig")]}
+hush._get = lambda url, timeout=0: json.dumps(rel).encode()
+assert hush.latest_release() == ("v2.0.0", "u/hush-v2.0.0.zip", "u/hush-v2.0.0.zip.sig")
+hush.FROZEN = True
+assert hush.latest_release() == ("v2.0.0", "u/hush-v2.0.0.exe", "u/hush-v2.0.0.exe.sig")
+rel["assets"] = rel["assets"][:2]
+assert hush.latest_release() == ("v2.0.0", None, None)
+hush.FROZEN = False
 
 # ed25519 verifier: RFC 8032 test 1 (empty message), then tampered inputs
 pk = bytes.fromhex("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a")

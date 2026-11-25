@@ -20,9 +20,10 @@ if WIN:
     from pycaw.constants import CLSID_MMDeviceEnumerator
     from pycaw.pycaw import IAudioSessionControl2, IAudioSessionManager2
 
-VERSION = "1.3.2"
+VERSION = "1.4.0"
 REPO = "gigolajulian/hush"
-APP_DIR = Path(__file__).resolve().parent
+FROZEN = getattr(sys, "frozen", False)  # the PyInstaller Hush.exe
+APP_DIR = Path(sys.executable).parent if FROZEN else Path(__file__).resolve().parent
 UPDATE_EVERY = 24 * 3600
 POLL = 0.25
 RELEASE_POLLS = 2 if WIN else 6  # inactive polls before unmuting; the Mac helper drops input for under a second mid-dictation
@@ -328,7 +329,8 @@ def latest_release():
         if e.code == 404: return None
         raise
     tag, assets = r["tag_name"], {a["name"]: a["browser_download_url"] for a in r.get("assets", [])}
-    return tag, assets.get(f"hush-{tag}.zip"), assets.get(f"hush-{tag}.zip.sig")
+    name = f"hush-{tag}.exe" if FROZEN else f"hush-{tag}.zip"  # the exe updates by swapping itself for a signed exe
+    return tag, assets.get(name), assets.get(f"{name}.sig")
 
 
 def newer_release():
@@ -336,12 +338,21 @@ def newer_release():
     return rel if rel and vtuple(rel[0]) > vtuple(VERSION) else None
 
 
-def apply_update(tag, zip_url, sig_url, app_dir=APP_DIR):
-    """Replace the app files with the release, only if its zip is signed. Never called on a git clone (see check)."""
+def apply_update(tag, zip_url, sig_url, app_dir=APP_DIR, frozen=FROZEN):
+    """Replace the app files (or Hush.exe) with the release, only if it is signed. Never called on a git clone (see check)."""
     if not zip_url or not sig_url: raise RuntimeError(f"{tag} is not signed, not installing")
     data = _get(zip_url, timeout=60)
     if not signed(tag, data, _get(sig_url).decode("ascii", "replace")):
         raise RuntimeError(f"{tag} signature does not match, not installing")
+    if frozen:  # Windows lets a running exe be renamed but not overwritten
+        exe, new, old = app_dir / "Hush.exe", app_dir / "Hush.exe.new", app_dir / "Hush.exe.old"
+        new.write_bytes(data)
+        old.unlink(missing_ok=True)
+        exe.rename(old)
+        try: new.rename(exe)
+        except OSError: old.rename(exe); raise
+        log(f"updated to {tag}")
+        return
     with zipfile.ZipFile(io.BytesIO(data)) as z:
         for info in z.infolist():
             rel = Path(*Path(info.filename).parts[1:])  # drop the "hush/" root folder
@@ -358,6 +369,10 @@ def apply_update(tag, zip_url, sig_url, app_dir=APP_DIR):
 
 
 def restart():
+    if FROZEN:  # a fresh onefile copy must not reuse this one's unpack folder, which goes away when we exit
+        subprocess.Popen([str(APP_DIR / "Hush.exe")], cwd=str(APP_DIR), env={**os.environ, "PYINSTALLER_RESET_ENVIRONMENT": "1"},
+                         creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP)
+        return
     if not WIN:  # the LaunchAgent sets AbandonProcessGroup, so this child outlives us
         subprocess.Popen([sys.executable, str(APP_DIR / "hush.py")], cwd=str(APP_DIR), start_new_session=True)
         return
@@ -438,6 +453,32 @@ def signed(tag, data, sig_b64, key=PUBKEY):
     return ed25519_verify(key, f"Hush {tag.lstrip('v')} {hashlib.sha256(data).hexdigest()}\n".encode(), sig)
 
 
+_kernel32 = ctypes.WinDLL("kernel32", use_last_error=True) if WIN else None
+_instance = None
+
+
+def single_instance():
+    """Hold a named mutex for this login session. False if another Hush holds it. Windows only; launchd covers macOS."""
+    global _instance
+    if not WIN: return True
+    _instance = _kernel32.CreateMutexW(None, False, "Local\\Hush")
+    return ctypes.get_last_error() != 183  # ERROR_ALREADY_EXISTS
+
+
+def release_instance():
+    """Let a restarted copy take over before this one exits."""
+    global _instance
+    if _instance: _kernel32.CloseHandle(_instance); _instance = None
+
+
+def installed_housekeeping():
+    """Installed exe: drop the copy an update swapped out, and show the running version in Installed apps."""
+    (APP_DIR / "Hush.exe.old").unlink(missing_ok=True)
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Uninstall\Hush",
+                        0, winreg.KEY_SET_VALUE) as k:
+        winreg.SetValueEx(k, "DisplayVersion", 0, winreg.REG_SZ, VERSION)
+
+
 # ---------- tray ----------
 def _draw_icon(on):
     """Dot with a vertical line through it. Only the colors change: grey while watching, cyan while Hush holds a mute."""
@@ -462,6 +503,10 @@ def icon_img(on):
 
 
 def main():
+    if not single_instance(): return
+    if FROZEN:
+        try: installed_housekeeping()
+        except OSError: pass  # a build run from dist\, not installed; or the swapped-out copy is still exiting
     state = {"paused": False, "status": "starting", "stop": False, "busy": False, "update": ""}
     settings = load_settings()
     icon = pystray.Icon("hush", icon_img(False), "Hush")
@@ -523,6 +568,7 @@ def main():
             if state["stop"]: return
             apply_update(*rel)
             notify(f"Updated to {rel[0]}. Restarting.")
+            release_instance()
             restart()
             shutdown()
         except Exception as e:
