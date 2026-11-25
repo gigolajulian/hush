@@ -46,4 +46,4 @@ for (const file of [zip, exe]) {
   fs.writeFileSync(file + '.sig', sig.toString('base64') + '\n');
   console.log(`signed ${path.basename(file)}`);
 }
-if (process.argv.includes('--upload')) execFileSync('gh', ['release', 'upload', tag, zip, zip + '.sig', exe, exe + '.sig', '--clobber', '-R', 'gigolajulian/hush'], { stdio: 'inherit' });
+if (process.argv.includes('--upload')) execFileSync('gh', ['release', 'upload', tag, zip, zip + '.sig', exe, exe + '.sig', '--clobber', '-R', 'loupedesk/hush'], { stdio: 'inherit' });
