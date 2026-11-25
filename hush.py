@@ -473,10 +473,13 @@ def release_instance():
 
 def installed_housekeeping():
     """Installed exe: drop the copy an update swapped out, and show the running version in Installed apps."""
-    (APP_DIR / "Hush.exe.old").unlink(missing_ok=True)
-    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Uninstall\Hush",
-                        0, winreg.KEY_SET_VALUE) as k:
-        winreg.SetValueEx(k, "DisplayVersion", 0, winreg.REG_SZ, VERSION)
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Uninstall\Hush",
+                            0, winreg.KEY_SET_VALUE) as k:
+            winreg.SetValueEx(k, "DisplayVersion", 0, winreg.REG_SZ, VERSION)
+    except OSError: pass  # a build run from dist\, not installed
+    try: (APP_DIR / "Hush.exe.old").unlink(missing_ok=True)
+    except OSError: pass  # the swapped-out copy is still exiting; the next start clears it
 
 
 # ---------- tray ----------
@@ -504,9 +507,7 @@ def icon_img(on):
 
 def main():
     if not single_instance(): return
-    if FROZEN:
-        try: installed_housekeeping()
-        except OSError: pass  # a build run from dist\, not installed; or the swapped-out copy is still exiting
+    if FROZEN: installed_housekeeping()
     state = {"paused": False, "status": "starting", "stop": False, "busy": False, "update": ""}
     settings = load_settings()
     icon = pystray.Icon("hush", icon_img(False), "Hush")
