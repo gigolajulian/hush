@@ -92,6 +92,20 @@ rel["assets"] = rel["assets"][:2]
 assert hush.latest_release() == ("v2.0.0", None, None)
 hush.FROZEN = False
 
+# Start with Windows: toggles a Run value under a scratch key, and clears the old Startup shortcut
+if hush.WIN:
+    hush.RUN_KEY = r"Software\HushSelfTest\Run"
+    hush.OLD_STARTUP_LNK = Path(tempfile.mkdtemp()) / "Hush.lnk"
+    hush.OLD_STARTUP_LNK.write_text("lnk")
+    assert hush.starts_with_windows()
+    hush.set_start_with_windows(True)
+    assert hush.starts_with_windows() and not hush.OLD_STARTUP_LNK.exists()
+    hush.set_start_with_windows(False)
+    assert not hush.starts_with_windows()
+    hush.set_start_with_windows(False)  # off twice is fine
+    hush.winreg.DeleteKey(hush.winreg.HKEY_CURRENT_USER, hush.RUN_KEY)
+    hush.winreg.DeleteKey(hush.winreg.HKEY_CURRENT_USER, r"Software\HushSelfTest")
+
 # ed25519 verifier: RFC 8032 test 1 (empty message), then tampered inputs
 pk = bytes.fromhex("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a")
 sig = bytes.fromhex("e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b")

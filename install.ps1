@@ -49,9 +49,11 @@ New-Item -ItemType Directory -Force $app | Out-Null
 Copy-Item "$dir\dist\Hush.exe", "$dir\uninstall.ps1" $app -Force
 Remove-Item "$app\Hush.exe.old" -ErrorAction SilentlyContinue
 
-# 5. Start menu and start at login (replaces the old Startup shortcut that ran pythonw)
+# 5. Start menu, and start at login through the HKCU Run key (the tray's Start with Windows item toggles it)
+Remove-Item "$programs\Startup\Hush.lnk" -ErrorAction SilentlyContinue  # older installs started from a Startup shortcut
+Set-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' Hush "`"$app\Hush.exe`""
 $shell = New-Object -ComObject WScript.Shell
-foreach ($lnk in "$programs\Hush.lnk", "$programs\Startup\Hush.lnk") {
+foreach ($lnk in @("$programs\Hush.lnk")) {
     $sh = $shell.CreateShortcut($lnk)
     $sh.TargetPath = "$app\Hush.exe"
     $sh.Arguments = ''

@@ -20,7 +20,7 @@ if WIN:
     from pycaw.constants import CLSID_MMDeviceEnumerator
     from pycaw.pycaw import IAudioSessionControl2, IAudioSessionManager2
 
-VERSION = "1.4.0"
+VERSION = "1.5.0"
 REPO = "loupedesk/hush"
 FROZEN = getattr(sys, "frozen", False)  # the PyInstaller Hush.exe
 APP_DIR = Path(sys.executable).parent if FROZEN else Path(__file__).resolve().parent
@@ -482,6 +482,33 @@ def installed_housekeeping():
     except OSError: pass  # the swapped-out copy is still exiting; the next start clears it
 
 
+RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+OLD_STARTUP_LNK = Path(os.environ.get("APPDATA", "")) / r"Microsoft\Windows\Start Menu\Programs\Startup\Hush.lnk"
+
+
+def startup_command():
+    """What Windows runs at login: the exe itself (updates swap it in place, so the path never changes)."""
+    if FROZEN: return f'"{sys.executable}"'
+    return f'"{Path(sys.executable).with_name("pythonw.exe")}" "{Path(__file__).resolve()}"'
+
+
+def starts_with_windows():
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k: winreg.QueryValueEx(k, "Hush")
+        return True
+    except OSError:
+        return OLD_STARTUP_LNK.exists()  # installs before 1.5.0 used a Startup shortcut
+
+
+def set_start_with_windows(on):
+    OLD_STARTUP_LNK.unlink(missing_ok=True)  # the Run value replaces it either way, so it never runs twice
+    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:
+        if on: winreg.SetValueEx(k, "Hush", 0, winreg.REG_SZ, startup_command())
+        else:
+            try: winreg.DeleteValue(k, "Hush")
+            except FileNotFoundError: pass
+
+
 # ---------- tray ----------
 def _draw_icon(on):
     """Dot with a vertical line through it. Only the colors change: grey while watching, cyan while Hush holds a mute."""
@@ -597,6 +624,10 @@ def main():
         settings["quiet_mute"] = not settings["quiet_mute"]
         save_settings(settings)
 
+    def toggle_startup(_, __):
+        try: set_start_with_windows(not starts_with_windows())
+        except OSError as e: log(f"startup toggle error {e!r}"); notify("Could not change Start with Windows. See the log.")
+
     icon.menu = pystray.Menu(
         pystray.MenuItem(lambda _: state["status"], None, enabled=False),
         pystray.MenuItem(lambda _: state["update"] or f"Hush {VERSION}", None, enabled=False),
@@ -605,6 +636,7 @@ def main():
         pystray.MenuItem("Quiet mute (no Discord sound)", toggle_quiet, checked=lambda _: settings["quiet_mute"]),
         pystray.MenuItem("Check for updates", lambda: threading.Thread(target=check, args=(True,), daemon=True).start()),
         pystray.MenuItem("Auto update", toggle_auto, checked=lambda _: settings["auto_update"]),
+        pystray.MenuItem("Start with Windows", toggle_startup, checked=lambda _: starts_with_windows(), visible=WIN),
         pystray.MenuItem("Quit", lambda: shutdown()),
     )
     loop_thread.start()
