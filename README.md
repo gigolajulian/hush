@@ -35,7 +35,7 @@ You need the Discord desktop app, and Python 3.10+ to build Hush.
    It asks for the same two values and saves them in `~/Library/Application Support/Hush/keys.json`, readable only by you. A login item starts Hush in the menu bar.
 3. **Authorize once.** Join a voice channel and dictate in Claude. Discord shows an Authorize popup. Accept it.
 
-Hush starts at login from then on.
+Hush starts at login from then on. On Windows, untick **Start with Windows** in the tray menu to stop that.
 
 ## Updates
 Hush checks GitHub for a new release at startup and once a day, and installs it when you aren't dictating. It never restarts mid-dictation. Right-click the tray icon for **Check for updates**, or untick **Auto update** to turn it off. The installed Windows app downloads the release's `Hush.exe`, swaps it in and restarts. A zip install gets its files replaced. Either way only after the signature checks out against the key built into Hush. A git clone only tells you a release is out: update it with `git pull` yourself.
