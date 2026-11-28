@@ -20,7 +20,7 @@ if WIN:
     from pycaw.constants import CLSID_MMDeviceEnumerator
     from pycaw.pycaw import IAudioSessionControl2, IAudioSessionManager2
 
-VERSION = "1.5.0"
+VERSION = "1.6.0"
 REPO = "loupedesk/hush"
 FROZEN = getattr(sys, "frozen", False)  # the PyInstaller Hush.exe
 APP_DIR = Path(sys.executable).parent if FROZEN else Path(__file__).resolve().parent
@@ -34,6 +34,7 @@ TOKEN_FILE = STATE_DIR / "token.json"
 LOG_FILE = STATE_DIR / "hush.log"
 SETTINGS_FILE = STATE_DIR / "settings.json"
 QUIET_FILE = STATE_DIR / "quiet.json"
+HEADLESS = "--headless" in sys.argv  # run by LOUPE: no tray icon, no self-update, no Start with Windows
 
 
 def env(name):
@@ -509,6 +510,25 @@ def set_start_with_windows(on):
             except FileNotFoundError: pass
 
 
+# ---------- headless (LOUPE add-on) ----------
+def emit(**msg):
+    """One JSON line to LOUPE. A closed pipe means LOUPE is gone; stdin EOF stops us right after."""
+    try: print(json.dumps(msg), flush=True)
+    except (OSError, ValueError, AttributeError): pass
+
+
+def headless_commands(state, settings, lines):
+    """LOUPE's commands, one per line, until quit or EOF (LOUPE quit or died)."""
+    for line in lines:
+        cmd = line.strip()
+        if cmd == "quit": return
+        if cmd in ("pause", "resume"): state["paused"] = cmd == "pause"
+        elif cmd in ("quiet on", "quiet off"):
+            settings["quiet_mute"] = cmd == "quiet on"
+            save_settings(settings)
+        state["tick"] = True  # report the change even if the status line stays the same
+
+
 # ---------- tray ----------
 def _draw_icon(on):
     """Dot with a vertical line through it. Only the colors change: grey while watching, cyan while Hush holds a mute."""
@@ -533,19 +553,22 @@ def icon_img(on):
 
 
 def main():
-    if not single_instance(): return
-    if FROZEN: installed_housekeeping()
-    state = {"paused": False, "status": "starting", "stop": False, "busy": False, "update": ""}
+    if not single_instance():
+        if HEADLESS: emit(status="standalone"); sys.exit(3)  # another Hush holds the lock: LOUPE leaves it be
+        return
+    if FROZEN and not HEADLESS: installed_housekeeping()
+    state = {"paused": False, "status": "starting", "stop": False, "busy": False, "update": "", "tick": True}
     settings = load_settings()
-    icon = pystray.Icon("hush", icon_img(False), "Hush")
+    icon = None if HEADLESS else pystray.Icon("hush", icon_img(False), "Hush")
 
     def notify(msg):
+        if not icon: return
         try: icon.notify(msg, "Hush")
         except Exception: pass  # not every pystray backend has notifications; never let that block an update
 
     def loop():
         mic, d = (ClaudeMic() if WIN else MacClaudeMic()), Discord()
-        m, retry_at = Muter(d, lambda: settings["quiet_mute"]), 0
+        m, retry_at, last = Muter(d, lambda: settings["quiet_mute"]), 0, None
         while not state["stop"]:
             state["busy"] = m.talking or m.we_muted  # never restart for an update mid-dictation
             try:
@@ -563,14 +586,27 @@ def main():
                 state["status"] = msg
                 m.talking = m.we_muted and m.talking  # if the mute never landed, retry it on the next active poll
                 retry_at = time.time() + 5
-            if icon.icon is not icon_img(m.we_muted): icon.icon = icon_img(m.we_muted)  # only touch the tray on change
-            if icon.title != f"Hush | {state['status']}": icon.title = f"Hush | {state['status']}"
+            if HEADLESS:  # tell LOUPE only on change
+                now = (state["status"], m.we_muted)
+                if state["tick"] or now != last:
+                    last, state["tick"] = now, False
+                    emit(status=state["status"], holding=m.we_muted, paused=state["paused"], quiet=settings["quiet_mute"],
+                         keys=bool(env("DISCORD_CLIENT_ID") and env("DISCORD_CLIENT_SECRET")), version=VERSION)
+            else:
+                if icon.icon is not icon_img(m.we_muted): icon.icon = icon_img(m.we_muted)  # only touch the tray on change
+                if icon.title != f"Hush | {state['status']}": icon.title = f"Hush | {state['status']}"
             time.sleep(POLL)
         try: m.release()
         except Exception: pass
 
     loop_thread = threading.Thread(target=loop, daemon=True)
     check_lock = threading.Lock()
+    if HEADLESS:  # LOUPE updates this copy and owns startup, so neither runs here
+        loop_thread.start()
+        headless_commands(state, settings, sys.stdin or [])  # no stdin (none passed): nothing to control us, so stop
+        state["stop"] = True
+        loop_thread.join(timeout=3)  # give back any mute we hold
+        return
 
     def shutdown():
         state["stop"] = True

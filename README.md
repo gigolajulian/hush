@@ -37,6 +37,11 @@ You need the Discord desktop app, and Python 3.10+ to build Hush.
 
 Hush starts at login from then on. On Windows, untick **Start with Windows** in the tray menu to stop that.
 
+## Inside LOUPE
+On Windows, LOUPE can run Hush for you, so you don't need a second tray icon: tick **Add Hush** in LOUPE's tray menu. LOUPE downloads the signed `Hush.exe` from this repo's releases, checks its signature and runs it as `Hush.exe --headless`: no tray icon, no self-update, no Start with Windows. Its status, Pause and Quiet mute show in LOUPE's tray, and it starts and stops with LOUPE. If this standalone Hush is already running, LOUPE uses it instead, so Discord is never muted twice. Both read the same Discord keys and settings.
+
+`--headless` writes one JSON status line to stdout on every change and reads `pause`, `resume`, `quiet on`, `quiet off` and `quit` from stdin. It stops at `quit` or when stdin closes, and gives back any mute it holds. If another Hush is running it prints `{"status": "standalone"}` and exits with code 3.
+
 ## Updates
 Hush checks GitHub for a new release at startup and once a day, and installs it when you aren't dictating. It never restarts mid-dictation. Right-click the tray icon for **Check for updates**, or untick **Auto update** to turn it off. The installed Windows app downloads the release's `Hush.exe`, swaps it in and restarts. A zip install gets its files replaced. Either way only after the signature checks out against the key built into Hush. A git clone only tells you a release is out: update it with `git pull` yourself.
 

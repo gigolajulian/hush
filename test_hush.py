@@ -114,4 +114,11 @@ assert not hush.ed25519_verify(pk, b"x", sig)
 assert not hush.ed25519_verify(pk, b"", sig[:-1] + bytes([sig[-1] ^ 1]))
 assert not hush.ed25519_verify(hush.PUBKEY, b"", sig)
 assert not hush.signed("v1.0.0", b"zip", "not base64!") and not hush.signed("v1.0.0", b"zip", "")
+# headless (LOUPE): commands change state until quit; quiet mute is saved for the standalone app too
+hush.SETTINGS_FILE = Path(tempfile.mkdtemp()) / "settings.json"
+st, se = {"paused": False, "tick": False}, {"quiet_mute": False}
+hush.headless_commands(st, se, iter(["pause", "quiet on ", "bogus", "quit", "resume"]))
+assert st["paused"] and st["tick"] and se["quiet_mute"] and json.loads(hush.SETTINGS_FILE.read_text())["quiet_mute"]
+hush.headless_commands(st, se, iter(["resume", "quiet off"]))  # EOF ends it too
+assert not st["paused"] and not se["quiet_mute"]
 print("ok")
